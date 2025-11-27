@@ -53,11 +53,11 @@ for p in THR_PATHS:
             # only accept if in [0,1]; otherwise ignore this file
             if 0.0 <= thr_raw <= 1.0:
                 OPT_THRESHOLD = thr_raw
-                # console.log(f"[cyan]Loaded optimal threshold from {p}:[/cyan] {OPT_THRESHOLD}") //For Debugging
+                # console.log(f"[cyan]Loaded optimal threshold from {p}:[/cyan] {OPT_THRESHOLD}")  # For debugging
                 break
             else:
                 # console.log(
-                #     f"[yellow]Warning:[/yellow] threshold {thr_raw} from {p} " //For Debugging
+                #     f"[yellow]Warning:[/yellow] threshold {thr_raw} from {p} "
                 #     f"is outside [0,1]; ignoring this file"
                 # )
                 pass
@@ -67,25 +67,12 @@ for p in THR_PATHS:
 
 
 # ---------------------------------------------------------------------------
-# Scoring + heuristic classification
+# Scoring helpers (image, PDF, DOCX)
 # ---------------------------------------------------------------------------
 
-def compute_numeric_score(results: dict) -> float:
+def _image_score(results: dict) -> float:
     """
-    Combine detector outputs into a single numeric score in [0, 1].
-
-    THIS is where the weights of different techniques live.
-
-    Weights (you can tweak these):
-      - W_LSB:        weight of LSB suspicious_score
-      - W_DCT:        weight of DCT dct_suspicion
-      - W_APP:        weight of appended-data suspicion
-      - W_PNG:        weight of PNG suspicion
-
-    For each image:
-      score_image = (W_LSB*lsb + W_DCT*dct + W_APP*app + W_PNG*png) / (W_LSB+W_DCT+W_APP+W_PNG)
-
-    Final numeric_score = average of score_image over all images.
+    Your existing image numeric score logic, unchanged in behaviour.
     """
 
     # >>>>>>>>>>>>>>>>>>  TECHNIQUE WEIGHTS HERE  <<<<<<<<<<<<<<<<<<<<<<
@@ -146,6 +133,123 @@ def compute_numeric_score(results: dict) -> float:
 
     numeric = total / images_count
     return max(0.0, min(1.0, float(numeric)))
+
+
+def _pdf_score(pdf_streams: dict | None) -> float:
+    """
+    Numeric score from PDF object streams.
+
+    - entropy >= 7.8 → anomaly
+    - magic_hit True → strong evidence (embedded exe/zip/etc.)
+    """
+    if not pdf_streams:
+        return 0.0
+
+    streams = pdf_streams.get("streams") or []
+    if not streams:
+        return 0.0
+
+    susp_total = 0.0
+    for s in streams:
+        ent = float(s.get("entropy", 0.0) or 0.0)
+        magic = bool(s.get("magic_hit", False))
+        local = 0.0
+        if ent >= 7.8:
+            local += 0.4
+        if magic:
+            local += 0.8
+        susp_total += min(1.0, local)
+
+    avg = susp_total / len(streams)
+    return max(0.0, min(1.0, avg))
+
+
+def _docx_score(docx_info: dict | None) -> float:
+    """
+    Numeric score from DOCX embeds + macros.
+
+    - high-entropy embedded binaries / suspicious_ext / dangerous extensions
+    - macros present
+    """
+    if not docx_info:
+        return 0.0
+
+    embeds = docx_info.get("embeds") or []
+    macros = docx_info.get("macros") or {}
+
+    susp_total = 0.0
+    n_parts = 0
+
+    # embedded objects
+    for e in embeds:
+        n_parts += 1
+        ent = float(e.get("entropy", 0.0) or 0.0)
+        susp_ext = bool(e.get("suspicious_ext", False))
+        name = str(e.get("name", "")).lower()
+
+        local = 0.0
+        if ent >= 7.8:
+            local += 0.4
+        if susp_ext or name.endswith((".exe", ".dll", ".js", ".vbs", ".bat", ".ps1")):
+            local += 0.8
+
+        susp_total += min(1.0, local)
+
+    # macros
+    if macros.get("has_macros"):
+        n_parts += 1
+        local = 0.6
+        susp_total += min(1.0, local)
+
+    if n_parts == 0:
+        return 0.0
+
+    avg = susp_total / n_parts
+    return max(0.0, min(1.0, avg))
+
+
+def compute_numeric_score(results: dict) -> float:
+    """
+    Final numeric score in [0, 1] combining:
+
+      - image_score
+      - pdf_score
+      - docx_score
+
+    This is where relative influence of images vs PDF vs DOCX is set.
+    """
+
+    img_s = _image_score(results)
+    pdf_s = _pdf_score(results.get("pdf_streams"))
+    docx_s = _docx_score(results.get("docx"))
+
+    # ------------- CROSS-TYPE WEIGHTS (tune if needed) -------------
+    W_IMG = 1.0
+    W_PDF = 1.0
+    W_DOCX = 1.0
+    # ---------------------------------------------------------------
+
+    parts = []
+    weights = []
+
+    parts.append(img_s)
+    weights.append(W_IMG)
+
+    if pdf_s > 0.0:
+        parts.append(pdf_s)
+        weights.append(W_PDF)
+
+    if docx_s > 0.0:
+        parts.append(docx_s)
+        weights.append(W_DOCX)
+
+    if not parts:
+        return 0.0
+
+    num = sum(w * s for w, s in zip(weights, parts))
+    den = sum(weights) if weights else 1.0
+    final = num / den
+    return max(0.0, min(1.0, float(final)))
 
 
 def classify(findings: dict):
@@ -313,6 +417,27 @@ def run_scan(filepath: str, force_heuristic: bool = False) -> dict:
                 break
         if strong_evidence:
             break
+
+    # PDF-based strong evidence
+    if not strong_evidence:
+        pdf = results.get("pdf_streams") or {}
+        for s_stream in pdf.get("streams", []) or []:
+            if s_stream.get("magic_hit", False):
+                strong_evidence = True
+                break
+
+    # DOCX-based strong evidence
+    if not strong_evidence:
+        doc = results.get("docx") or {}
+        if doc:
+            for e in doc.get("embeds", []) or []:
+                name = str(e.get("name", "")).lower()
+                susp_ext = bool(e.get("suspicious_ext", False))
+                if susp_ext or name.endswith((".exe", ".dll", ".js", ".vbs", ".bat", ".ps1")):
+                    strong_evidence = True
+                    break
+            if (not strong_evidence) and doc.get("macros", {}).get("has_macros"):
+                strong_evidence = True
 
     results["summary"]["hard_evidence"] = strong_evidence
 
