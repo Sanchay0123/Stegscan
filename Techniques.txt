@@ -1,0 +1,252 @@
+🧠 PART E — Full Explanation of Your Heuristic Steganography Algorithms
+(This is exactly what you should say in viva)
+Your project implements multi-domain heuristic steganalysis across images, PDFs, and documents.
+Below is the clear, polished version:
+
+1) LSB (Least Significant Bit) Analysis
+Used for PNG, BMP, uncompressed images.
+Idea:
+Natural images have random noise in the LSB layer.
+Steganography modifies LSBs to hide data.
+Your detectors:
+
+
+LSB suspicious_score → measures imbalance of 0/1 distribution in LSBs.
+
+
+Chi-square test → detects statistical artifacts caused by embedding.
+
+
+Entropy test → checks randomness within LSB plane.
+
+
+High deviation = possible LSB stego.
+
+2) JPEG DCT Analysis
+JPEG stores data in DCT coefficients block-by-block.
+Stego methods like F5, JSteg, OutGuess modify DCT coefficients.
+Your detectors:
+
+
+DCT coefficient histogram flatness
+
+
+Hidden data reduces the natural uneven distribution.
+
+
+
+
+Parity analysis
+
+
+JSteg modifies even/odd patterns.
+
+
+
+
+dct_suspicion score
+
+
+
+3) File Append Detector (Polyglot Stego)
+Many beginner stego tools attach payload after FFD9 (JPEG EOF).
+Your detector:
+
+
+Scans file tail for hidden content
+
+
+Checks entropy of tail region
+
+
+Detects magic bytes like PK, ZIP, RAR, PNG, etc.
+
+
+
+4) PNG Chunk Steganography Detector
+PNG has structured chunks. Steganographers use:
+
+
+custom chunks
+
+
+iTXt/zTXt compressed text
+
+
+extra metadata with hidden payload
+
+
+Your detector:
+
+
+Enumerates all chunks
+
+
+Flags any non-standard or suspicious chunk
+
+
+Measures chunk entropy
+
+
+Searches chunk payload for compressed data or ZIP headers
+
+
+
+5) IDAT Steganography (Advanced)
+The Kaggle dataset hides payload inside zlib-compressed IDAT.
+Your forensic pipeline:
+
+
+Combine all IDAT chunks
+
+
+Zlib-decompress into raw scanline bytes
+
+
+Search for:
+
+
+ZIP signatures
+
+
+EOCD
+
+
+High-entropy blocks
+
+
+
+
+Carve raw binary blobs
+
+
+Save .idat.raw and .carved.bin for analysis
+
+
+This is an advanced forensic technique.
+
+6) PDF Steganography Detection
+Analyzes PDF object streams for:
+
+
+High entropy
+
+
+Embedded files
+
+
+Suspicious JS
+
+
+Binary streams with ZIP signatures
+
+
+
+7) DOCX Steganography Detection
+DOCX is simply a ZIP with:
+
+
+word/media/*.png
+
+
+word/embeddings/*
+
+
+vbaProject.bin
+
+
+Your detector extracts all media & embedded objects and scans them with the image pipeline.
+
+🎯 In Summary — What You’ve Built
+You have built a multi-file steganography detection toolkit using heuristic analysis, multi-domain forensic extraction, and a clean CLI interface with full JSON reporting.
+It already supports:
+
+
+Image (LSB, DCT, IDAT, metadata)
+
+
+PDF (entropy, embedded attachments)
+
+
+DOCX (embedded objects, macros)
+
+
+Forensic extraction (IDAT carving)
+
+
+Evaluation (confusion matrix, ROC)
+
+
+Machine-learning-ready feature exports
+
+
+Your project is already beyond typical university-level work — closer to real steganalysis toolkits.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+📌 Summary of where you are
+
+You now have a working heuristic steganography detection tool with:
+
+Multi-detector architecture (LSB, DCT, APPEND, PNG-chunk)
+
+Forensic payload attempt extraction
+
+ROC evaluation + confusion matrix
+
+Adjustable threshold system
+
+Balanced evaluation dataset
+
+This is already a great university project.
+Now you’re simply tuning the trade-off curve between recall and precision.
+
+
+
+
+
+
+
+Running the program :
+
+source venv/bin/activate
+
+./stegscan.py <file_or_folder> -j
+
+
+Stegenographic Evaluator : python eval.py --clean /home/TheImmortalCreator/Downloads/archive/test/test/clean/ --stego /home/TheImmortalCreator/Downloads/archive/val/val/stego/ --out reports/eval_final
+
+optimal_threshold:  find_threshold.py --csv reports/eval/per_file_results.csv --out reports/eval/optimal_threshold.json
+
+python find_threshold_variants.py --csv reports/eval_new/per_file_results.csv --out reports/eval_new/threshold_candidates.json
+
+ python eval.py --clean /home/TheImmortalCreator/Downloads/archive/test/test/clean/ --stego /home/TheImmortalCreator/Downloads/archive/val/val/stego/ --out reports/eval_final
+
+
+ echo '{"threshold": 0.25}' > reports/eval_final/optimal_threshold.json
+
+ python stegscan.py some.png --threshold 0.15
+python stegscan.py some.png --threshold 0.6
+
